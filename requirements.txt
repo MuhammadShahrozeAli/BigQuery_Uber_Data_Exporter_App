@@ -1,3 +1,5 @@
+gcsfs==x.x.x
+st-files-connection
 streamlit
 google-cloud-bigquery
 pandas
