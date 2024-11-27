@@ -6,6 +6,7 @@ from io import BytesIO
 
 # Initialize the BigQuery client
 client = bigquery.Client()
+st.session_state.reports = {}
 
 # Define datasets and tables
 datasets_and_tables = {
@@ -37,80 +38,79 @@ datasets_and_tables = {
     # Add more datasets
 }
 
-# Streamlit UI
-st.title("BigQuery Uber Data Exporter")
-st.sidebar.header("Configuration")
+def main_page():
+    # Streamlit UI
+    st.title("BigQuery Uber Data Exporter")
+    st.sidebar.header("Configuration")
 
-# Select dataset and tables
-dataset_id = st.sidebar.selectbox("Select Dataset", list(datasets_and_tables.keys()))
-tables = st.sidebar.multiselect(
-    "Select Tables",
-    datasets_and_tables[dataset_id]
-)
+    # Select dataset and tables
+    dataset_id = st.selectbox("Select Dataset", list(datasets_and_tables.keys()))
+    tables = st.multiselect("Select Tables", datasets_and_tables[dataset_id])
 
-# Start and End date selection
-st.sidebar.header("Select Date Range")
-start_date = st.sidebar.date_input("Start Date", date.today())  # Default to today
-end_date = st.sidebar.date_input("End Date", date.today())  # Default to today
+    # Start and End date selection
+    st.sidebar.header("Select Date Range")
+    start_date = st.date_input("Start Date", date.today())  # Default to today
+    end_date = st.date_input("End Date", date.today())  # Default to today
 
-# Validation
-if start_date > end_date:
-    st.sidebar.error("Start Date cannot be after End Date.")
+    # Validation
+    if start_date > end_date:
+        st.sidebar.error("Start Date cannot be after End Date.")
 
-# Store reports in session state
-if "reports" not in st.session_state:
-    st.session_state.reports = {}
+    # Export data button
+    if st.button("Generate Report"):
+        if not tables:
+            st.error("Please select at least one table.")
+        else:
+            for table in tables:
+                query = f"""
+                SELECT *
+                FROM `{client.project}.{dataset_id}.{table}`(@start_date, @end_date)
+                """
 
-# Export data button
-if st.sidebar.button("Generate Report"):
-    if not tables:
-        st.error("Please select at least one table.")
-    else:
-        for table in tables:
-            query = f"""
-            SELECT *
-            FROM `{client.project}.{dataset_id}.{table}`(@start_date, @end_date)
-            """
+                # Configure query parameters
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("start_date", "STRING", start_date.strftime('%Y-%m-%d')),
+                        bigquery.ScalarQueryParameter("end_date", "STRING", end_date.strftime('%Y-%m-%d')),
+                    ]
+                )
 
+                try:
+                    with st.spinner('Loading...'):
+                        # Execute the query
+                        query_job = client.query(query, job_config=job_config)
+                        result = query_job.result()
 
-            # Configure query parameters
-            job_config = bigquery.QueryJobConfig(
-                query_parameters=[
-                    bigquery.ScalarQueryParameter("start_date", "STRING", start_date.strftime('%Y-%m-%d')),
-                    bigquery.ScalarQueryParameter("end_date", "STRING", end_date.strftime('%Y-%m-%d')),
-                ]
+                        # Convert to DataFrame
+                        df = result.to_dataframe()
+
+                        # Save data in session state for download
+                        report_key = f"MIN_LAH-{table}_{start_date}"
+                        st.session_state.reports[report_key] = df
+                    st.success(f"Data for `{table}` from `{start_date}` to `{end_date}` added to reports.")
+
+                except Exception as e:
+                    st.error(f"Error processing table `{table}`: {e}")
+                
+                finally:
+                    tables = None
+
+    # Display download buttons for each report
+    st.header("Download Reports")
+    if st.session_state.reports:
+        for report_key, df in st.session_state.reports.items():
+            # Convert DataFrame to CSV bytes
+            csv_data = df.to_csv(index=False).encode('utf-8')
+
+            # Display download button
+            st.download_button(
+                label=f"Download {report_key}",
+                data=csv_data,
+                file_name=f"{report_key}.csv",
+                mime="text/csv"
             )
+    else:
+        st.write("No reports available. Please generate reports first.")
 
-            try:
-                # Execute the query
-                query_job = client.query(query, job_config=job_config)
-                result = query_job.result()
-
-                # Convert to DataFrame
-                df = result.to_dataframe()
-
-                # Save data in session state for download
-                report_key = f"MIN_LAH-{table}_{start_date}"
-                st.session_state.reports[report_key] = df
-
-                st.success(f"Data for `{table}` from `{start_date}` to `{end_date}` added to reports.")
-
-            except Exception as e:
-                st.error(f"Error processing table `{table}`: {e}")
-
-# Display download buttons for each report
-st.header("Download Reports")
-if st.session_state.reports:
-    for report_key, df in st.session_state.reports.items():
-        # Convert DataFrame to CSV bytes
-        csv_data = df.to_csv(index=False).encode('utf-8')
-
-        # Display download button
-        st.download_button(
-            label=f"Download {report_key}",
-            data=csv_data,
-            file_name=f"{report_key}.csv",
-            mime="text/csv"
-        )
-else:
-    st.write("No reports available. Please generate reports first.")
+if __name__ == '__main__':
+    main_page()
