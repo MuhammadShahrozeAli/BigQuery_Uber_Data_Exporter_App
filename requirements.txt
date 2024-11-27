@@ -1,4 +1,4 @@
-gcsfs==x.x.x
+gcsfs
 st-files-connection
 streamlit
 google-cloud-bigquery
